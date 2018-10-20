@@ -1,0 +1,12 @@
+image: gradle:alpine
+
+stages:
+ - package
+
+package:
+  stage: package
+  script:
+    - ./gradlew build
+  artifacts:
+    paths:
+      - build/libs/*.jar
