@@ -3,6 +3,7 @@ description: Slave owners will bid on all slaves with diamonds. Any diamonds not
 author: Caleb Bassham
 version: 1.0.0
 depend: [ScenarioManager]
+softdepend: [ProtocolLib]
 main: me.calebbassham.scenariomanager.slavemarket.SlaveMarketPlugin
 
 commands:

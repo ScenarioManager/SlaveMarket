@@ -21,12 +21,14 @@ repositories {
     maven { url = "https://hub.spigotmc.org/nexus/content/repositories/snapshots/" }
     maven { url = "https://hub.spigotmc.org/nexus/content/groups/public/" }
     maven { url = "https://s3.amazonaws.com/caleb-maven" }
+    maven { url = 'http://repo.dmulloy2.net/nexus/repository/public/' }
 }
 
 dependencies {
     compile "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
     compileOnly "org.spigotmc:spigot-api:1.8-R0.1-SNAPSHOT"
     compileOnly "me.calebbassham:ScenarioManager:0.8.4"
+    compileOnly "com.comphenix.protocol:ProtocolLib:4.4.0"
 }
 
 compileKotlin {

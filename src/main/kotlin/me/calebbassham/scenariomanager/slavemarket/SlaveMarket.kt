@@ -7,6 +7,9 @@ import me.calebbassham.scenariomanager.api.settings.SimpleScenarioSetting
 import me.calebbassham.scenariomanager.api.settings.onlineplayer.OnlinePlayerArrayScenarioSetting
 import me.calebbassham.scenariomanager.api.settings.timespan.TimeSpanScenarioSetting
 import me.calebbassham.scenariomanager.api.uhc.TeamProvider
+import me.calebbassham.scenariomanager.slavemarket.protocol.broadcastTitle
+import me.calebbassham.scenariomanager.slavemarket.protocol.sendActionBar
+import me.calebbassham.scenariomanager.slavemarket.protocol.sendTitle
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.command.Command
@@ -20,6 +23,8 @@ import java.util.concurrent.CompletableFuture
 
 class SlaveMarket : SimpleScenario(), TeamAssigner {
 
+    val config = DefaultConfig()
+
     val diamonds = SimpleScenarioSetting("Diamonds", "How many diamonds each slave owner starts with.", 48)
     val bidTime = TimeSpanScenarioSetting("BidLength", "How long the bid for each slave will last.", 20 * 10)
     val slaveOwners = OnlinePlayerArrayScenarioSetting("SlaveOwners", "The slave owners.", emptyArray())
@@ -29,24 +34,41 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
 
     private var owners: Array<SlaveOwner>? = null
 
+    fun isOwner(player: Player) = owners?.map { it.uniqueId }?.contains(player.uniqueId) == true
+
     private var currentBid: BidTask? = null
 
     private lateinit var teamProvider: TeamProvider
 
     override fun onAssignTeams(teams: TeamProvider, players: Array<Player>): CompletableFuture<Void> {
+        val future = CompletableFuture<Void>()
+
         teamProvider = teams
 
         owners = slaveOwners.value.mapNotNull { it.player }.map { SlaveOwner(it, diamonds.value) }.toTypedArray()
-
         owners?.forEach { teams.mustRegisterTeam().addEntry(it.name) }
 
-        broadcast("Slave Market auctions are starting. The slave owners are ${owners?.map { it.displayName }?.format()}.")
+        when (config.STATUS_MESSAGE_TYPE) {
+            StatusMessageType.CHAT -> broadcast("Slave Market auctions are starting in 10 seconds. The slave owners are ${owners?.map { it.displayName }?.format()}. The action timer begins after the first bid. The minimum bid is 0. Bid with /bid <amount>.")
+            StatusMessageType.TITLE -> {
 
-        val future = CompletableFuture<Void>()
+                broadcast("The auction timer starts after the first bid.")
+
+                for (player in Bukkit.getOnlinePlayers()) {
+                    if (isOwner(player)) {
+                        sendTitle(player, "You are a slave owner", "Use /bid [amount] to bid on slaves", 0, 20 * 5, 0)
+                    } else {
+                        sendTitle(player, "Owners", owners?.map { it.displayName }?.format() ?: "none", 0, 20 * 5, 0)
+                    }
+                }
+
+            }
+        }
+
 
         val playerIter = players.filter { owners?.map { it.uniqueId }?.contains(it.uniqueId) == false }.map { it.uniqueId }.iterator()
 
-        currentBid = BidTask(playerIter.next(), playerIter, future).also { it.runTaskTimer(plugin, 0, 1) }
+        currentBid = BidTask(playerIter.next(), playerIter, future).also { it.runTaskTimer(plugin, 20 * 10, 1) }
 
         return future
     }
@@ -75,30 +97,69 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
         private var isRunning = false
 
         override fun run() {
-            if (firstRun) {
-                broadcast("A bid has started for $slaveName. The timer will begin after the first bid. The minimum bid is 0. Bid with /bid <amount>.")
-                firstRun = false
+            if (config.STATUS_MESSAGE_TYPE == StatusMessageType.CHAT) {
+                if (firstRun) {
+                    broadcast("A bid has started for $slaveName.")
+                    firstRun = false
+                }
             }
 
-            if (isRunning && ticks != 0.toLong()) {
-                if (ticks % 100 == 0L || ticks <= 100 && ticks % 20 == 0L) {
-                    broadcast("${ScenarioManagerUtils.formatTicks(ticks)} remaining on the current bid.")
+            when (config.STATUS_MESSAGE_TYPE) {
+                StatusMessageType.CHAT -> if (isRunning && ticks != 0.toLong()) {
+                    if (ticks % 100 == 0L || ticks <= 100 && ticks % 20 == 0L) {
+                        broadcast("${ScenarioManagerUtils.formatTicks(ticks)} remaining on the current bid.")
+                    }
+                }
+
+                StatusMessageType.TITLE -> if (ticks % 20 == 0L) {
+                    broadcastTitle(slaveName, "${ScenarioManagerUtils.formatTicks(ticks)} | ${bid?.toString()?.plus(" diamonds") ?: "no bid"}", 0, 25, 0)
+                }
+            }
+
+            if (config.BALANCE_MESSAGE_TYPE == BalanceMessageType.ACTION_BAR && ticks % 20 == 0L) {
+                owners?.forEach {
+                    val player = it.player
+                    if (player != null) {
+                        var balance = it.balance
+                        if (bidder?.uniqueId == player.uniqueId) balance -= (bid ?: 0)
+
+                        sendActionBar(player, "$balance diamonds")
+                    }
                 }
             }
 
             if (ticks <= 0) {
                 cancel()
 
-                broadcast("${bidder?.displayName} has bought $slaveName for $bid diamonds.")
-                bidder?.balance?.minus(bid ?: 0)
+                when(config.STATUS_MESSAGE_TYPE) {
+                    StatusMessageType.CHAT -> broadcast("${bidder?.displayName} has bought $slaveName for $bid diamonds.")
+
+                    StatusMessageType.TITLE -> {
+                        val bidder = bidder
+
+                        if (bidder != null) {
+                            broadcastTitle(slaveName, "bought by ${teamProvider.getPlayerTeam(bidder.offlinePlayer)?.prefix}${bidder.displayName}", 0, 55, 0)
+                        }
+                    }
+                }
+
+                bidder?.let {
+                    it.balance -= bid ?: 0
+                }
+
                 val team = teamProvider.getPlayerTeam(Bukkit.getOfflinePlayer(bidder?.uniqueId))
                 team?.addEntry(slave?.name)
 
                 if (players.hasNext()) {
-                    currentBid = BidTask(players.next(), players, future).apply { runTaskTimer(plugin, 10, 1) }
+                    currentBid = BidTask(players.next(), players, future).apply { runTaskTimer(plugin, 50, 1) }
                 } else {
                     broadcast("All slaves have been purchased.")
-                    future.complete(null)
+
+                    object : BukkitRunnable() {
+                        override fun run() {
+                            future.complete(null)
+                        }
+                    }.runTaskLater(plugin, 20 * 3)
                 }
 
                 return
@@ -121,7 +182,10 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
 
             if (ticks < 100) {
                 ticks += 100
-                broadcast("5 seconds have been added to the auction.")
+
+                if (config.STATUS_MESSAGE_TYPE == StatusMessageType.CHAT) {
+                    broadcast("5 seconds have been added to the auction.")
+                }
             }
 
             this.bid = bid
@@ -164,5 +228,20 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
             return true
         }
     }
+
+    interface Config {
+        val STATUS_MESSAGE_TYPE: StatusMessageType
+        val BALANCE_MESSAGE_TYPE: BalanceMessageType
+    }
+
+    inner class DefaultConfig : Config {
+        private val isUsingProtocolLib = Bukkit.getPluginManager().isPluginEnabled("ProtocolLib")
+
+        override val STATUS_MESSAGE_TYPE = if (isUsingProtocolLib) StatusMessageType.TITLE else StatusMessageType.CHAT
+        override val BALANCE_MESSAGE_TYPE = if (isUsingProtocolLib) BalanceMessageType.ACTION_BAR else BalanceMessageType.CHAT
+    }
+
+    enum class StatusMessageType { CHAT, TITLE }
+    enum class BalanceMessageType { CHAT, ACTION_BAR }
 
 }
