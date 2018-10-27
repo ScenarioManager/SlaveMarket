@@ -26,7 +26,7 @@ repositories {
 dependencies {
     compile "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
     compileOnly "org.spigotmc:spigot-api:1.8-R0.1-SNAPSHOT"
-    compileOnly "me.calebbassham:ScenarioManager:0.8.0"
+    compileOnly "me.calebbassham:ScenarioManager:0.8.4"
 }
 
 compileKotlin {
@@ -38,12 +38,12 @@ compileTestKotlin {
 
 jar {
     from configurations.compile.collect { zipTree it }
-    baseName = "Scenario"
+    baseName = "SlaveMarket"
     archiveName = "${baseName}.${extension}"
 }
 
 shadowJar {
-    relocate 'kotlin', 'me.calebbassham.scenario.kotlin'
+    relocate 'kotlin', 'me.calebbassham.scenariomanager.slavemarket.kotlin'
     archiveName = jar.archiveName
 }
 

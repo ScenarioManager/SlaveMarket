@@ -1,5 +1,12 @@
-name: Scenario
-description: Description of scenario.
+name: SlaveMarket
+description: Slave owners will bid on all slaves with diamonds. Any diamonds not spent will be given to the slave owner when the game starts.
 author: Caleb Bassham
 version: 1.0.0
-main: me.calebbassham.scenariomanager.scenario.ScenarioPlugin
+depend: [ScenarioManager]
+main: me.calebbassham.scenariomanager.slavemarket.SlaveMarketPlugin
+
+commands:
+  bid:
+    aliases: [slavemarketbid]
+    usage: /<command> [amount]
+    description: Bid on the current slave. If no amount is provided, you will use the minimum bid.
