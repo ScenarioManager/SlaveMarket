@@ -12,4 +12,6 @@ class SlaveOwner(val uniqueId: UUID, val name: String, val displayName: String, 
 
     val offlinePlayer: OfflinePlayer get() = Bukkit.getOfflinePlayer(uniqueId)
 
+    var spawnNumber: Int? = null
+
 }

@@ -7,6 +7,8 @@ import org.bukkit.plugin.java.JavaPlugin
 class SlaveMarketPlugin : JavaPlugin() {
 
     override fun onEnable() {
+        saveDefaultConfig()
+
         val slaveMarket = SlaveMarket()
 
         scenarioManager.register(slaveMarket, this)

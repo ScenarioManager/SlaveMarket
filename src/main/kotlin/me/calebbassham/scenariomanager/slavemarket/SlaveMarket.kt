@@ -11,7 +11,9 @@ import me.calebbassham.scenariomanager.slavemarket.protocol.broadcastTitle
 import me.calebbassham.scenariomanager.slavemarket.protocol.sendActionBar
 import me.calebbassham.scenariomanager.slavemarket.protocol.sendTitle
 import org.bukkit.Bukkit
+import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.World
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
@@ -23,7 +25,7 @@ import java.util.concurrent.CompletableFuture
 
 class SlaveMarket : SimpleScenario(), TeamAssigner {
 
-    val config = DefaultConfig()
+    var config: Config? = null
 
     val diamonds = SimpleScenarioSetting("Diamonds", "How many diamonds each slave owner starts with.", 48)
     val bidTime = TimeSpanScenarioSetting("BidLength", "How long the bid for each slave will last.", 20 * 10)
@@ -31,10 +33,11 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
 
     override val settings = listOf(diamonds, bidTime, slaveOwners)
 
-
     private var owners: Array<SlaveOwner>? = null
 
     fun isOwner(player: Player) = owners?.map { it.uniqueId }?.contains(player.uniqueId) == true
+
+    fun getSlaveOwner(player: Player): SlaveOwner? = owners?.firstOrNull { player.uniqueId == it.uniqueId }
 
     private var currentBid: BidTask? = null
 
@@ -43,10 +46,32 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
     override fun onAssignTeams(teams: TeamProvider, players: Array<Player>): CompletableFuture<Void> {
         val future = CompletableFuture<Void>()
 
+        val config = DefaultConfig()
+        this.config = config
+
         teamProvider = teams
 
         owners = slaveOwners.value.mapNotNull { it.player }.map { SlaveOwner(it, diamonds.value) }.toTypedArray()
         owners?.forEach { teams.mustRegisterTeam().addEntry(it.name) }
+
+        if (config.useMap) {
+            var ownerSpawn = 0
+            for (player in players) {
+
+                val owner = getSlaveOwner(player)
+
+                if (owner != null) {
+                    config?.ownerSpawns?.get(ownerSpawn)?.let {
+                        player.teleport(it)
+                        owner.spawnNumber = ownerSpawn
+                    }
+
+                    ownerSpawn++
+                } else {
+                    player.teleport(config?.slaveSpawn)
+                }
+            }
+        }
 
         when (config.STATUS_MESSAGE_TYPE) {
             StatusMessageType.CHAT -> broadcast("Slave Market auctions are starting in 10 seconds. The slave owners are ${owners?.map { it.displayName }?.format()}. The action timer begins after the first bid. The minimum bid is 0. Bid with /bid <amount>.")
@@ -97,6 +122,8 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
         private var isRunning = false
 
         override fun run() {
+            val config = config ?: return
+
             if (config.STATUS_MESSAGE_TYPE == StatusMessageType.CHAT) {
                 if (firstRun) {
                     broadcast("A bid has started for $slaveName.")
@@ -112,7 +139,8 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
                 }
 
                 StatusMessageType.TITLE -> if (ticks % 20 == 0L) {
-                    broadcastTitle(slaveName, "${ScenarioManagerUtils.formatTicks(ticks)} | ${bid?.toString()?.plus(" diamonds") ?: "no bid"}", 0, 25, 0)
+                    broadcastTitle(slaveName, "${ScenarioManagerUtils.formatTicks(ticks)} | ${bid?.toString()?.plus(" diamonds")
+                        ?: "no bid"}", 0, 25, 0)
                 }
             }
 
@@ -131,7 +159,7 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
             if (ticks <= 0) {
                 cancel()
 
-                when(config.STATUS_MESSAGE_TYPE) {
+                when (config.STATUS_MESSAGE_TYPE) {
                     StatusMessageType.CHAT -> broadcast("${bidder?.displayName} has bought $slaveName for $bid diamonds.")
 
                     StatusMessageType.TITLE -> {
@@ -150,6 +178,14 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
                 val team = teamProvider.getPlayerTeam(Bukkit.getOfflinePlayer(bidder?.uniqueId))
                 team?.addEntry(slave?.name)
 
+                if (config.useMap) {
+                    val spawnNumber = bidder?.spawnNumber
+                    if (spawnNumber != null) {
+                        val spawnLoc = config.ownerSpawns?.get(spawnNumber)
+                        config.ownerSpawns?.get(spawnNumber)?.let { slave?.teleport(spawnLoc) }
+                    }
+                }
+
                 if (players.hasNext()) {
                     currentBid = BidTask(players.next(), players, future).apply { runTaskTimer(plugin, 50, 1) }
                 } else {
@@ -158,6 +194,7 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
                     object : BukkitRunnable() {
                         override fun run() {
                             future.complete(null)
+                            this@SlaveMarket.config = null
                         }
                     }.runTaskLater(plugin, 20 * 3)
                 }
@@ -172,6 +209,7 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
         }
 
         fun bid(bid: Int, bidder: Player) {
+            val config = config ?: return
 
             if (bid < this.bid ?: 0) {
                 sendMessage(bidder, "You must bid at least ${this.bid ?: 0}.")
@@ -232,13 +270,55 @@ class SlaveMarket : SimpleScenario(), TeamAssigner {
     interface Config {
         val STATUS_MESSAGE_TYPE: StatusMessageType
         val BALANCE_MESSAGE_TYPE: BalanceMessageType
+
+        val useMap: Boolean
+        val world: World?
+        val slaveSpawn: Location?
+        val ownerSpawns: Array<out Location>?
     }
 
     inner class DefaultConfig : Config {
+
         private val isUsingProtocolLib = Bukkit.getPluginManager().isPluginEnabled("ProtocolLib")
 
         override val STATUS_MESSAGE_TYPE = if (isUsingProtocolLib) StatusMessageType.TITLE else StatusMessageType.CHAT
         override val BALANCE_MESSAGE_TYPE = if (isUsingProtocolLib) BalanceMessageType.ACTION_BAR else BalanceMessageType.CHAT
+
+        override val useMap: Boolean
+
+        override val world: World?
+
+
+        override val slaveSpawn: Location?
+        override val ownerSpawns: Array<out Location>?
+
+
+        init {
+            val config = plugin.config
+
+            world = Bukkit.getWorld(config.getString("world"))
+
+            val parseLocation: (path: String) -> Location = { path ->
+                val x = config.getInt("$path.x")
+                val y = config.getDouble("$path.y")
+                val z = config.getInt("$path.z")
+
+                val yaw = config.getDouble("$path.yaw").toFloat()
+                val pitch = config.getDouble("$path.pitch").toFloat()
+
+                Location(world, x + 0.5, y, z + 0.5, yaw, pitch)
+            }
+
+            useMap = config.getBoolean("use map")
+
+            slaveSpawn = parseLocation("slave spawn")
+
+            ownerSpawns = config.getConfigurationSection("owner spawns").getKeys(false)
+                .map { parseLocation("owner spawns.$it") }
+                .toTypedArray()
+        }
+
+
     }
 
     enum class StatusMessageType { CHAT, TITLE }

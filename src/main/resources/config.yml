@@ -1,0 +1,16 @@
+use map: false
+
+world: spawn
+
+slave spawn:
+  x: 0
+  y: 60
+  z: 0
+
+owner spawns:
+  1:
+    x: 50
+    y: 60
+    z: 50
+    yaw: 0 #optional
+    pitch: 0 #optional
